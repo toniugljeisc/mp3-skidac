@@ -17,7 +17,7 @@ import tempfile
 import threading
 
 APP_NAME = "MP3 Skidač"
-APP_VERSION = "1.1"
+APP_VERSION = "1.2"
 
 if getattr(sys, "frozen", False):
     APP_DIR = os.path.dirname(sys.executable)
@@ -27,10 +27,16 @@ else:
     RES_DIR = APP_DIR
 
 IS_WIN = os.name == "nt"
+IS_MAC = sys.platform == "darwin"
 NO_WINDOW = 0x08000000 if IS_WIN else 0
 EXE = ".exe" if IS_WIN else ""
 
-CONFIG_DIR = os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~"), "MP3 Skidac")
+if IS_MAC:
+    CONFIG_DIR = os.path.join(os.path.expanduser("~"), "Library", "Application Support", "MP3 Skidac")
+else:
+    CONFIG_DIR = os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~"), "MP3 Skidac")
+# Mapa u koju se smije pisati (yt-dlp se sam ažurira): na Macu Application Support, inače mapa programa
+TOOLS_DIR = os.path.join(CONFIG_DIR, "bin") if IS_MAC else APP_DIR
 CONFIG_FILE = os.path.join(CONFIG_DIR, "postavke.json")
 DEFAULTS = {
     "out_dir": os.path.join(os.path.expanduser("~"), "Music", "MP3 Skidac"),
@@ -40,8 +46,27 @@ DEFAULTS = {
 
 # ------------------------------------------------------------------ Alati ---
 
+def prepare_tools():
+    """Mac: kopiraj yt-dlp i ffmpeg iz .app paketa u Application Support (tamo se yt-dlp smije ažurirati)."""
+    if not (IS_MAC and getattr(sys, "frozen", False)):
+        return
+    for name in ("yt-dlp", "ffmpeg"):
+        src = os.path.join(RES_DIR, name)
+        dst = os.path.join(TOOLS_DIR, name)
+        try:
+            if os.path.isfile(src) and (not os.path.isfile(dst) or
+                                        (name == "ffmpeg" and os.path.getsize(src) != os.path.getsize(dst))):
+                os.makedirs(TOOLS_DIR, exist_ok=True)
+                shutil.copyfile(src, dst)
+                os.chmod(dst, 0o755)
+        except OSError:
+            pass
+
+
 def find_tool(name):
-    for c in (os.path.join(APP_DIR, name + EXE),
+    for c in (os.path.join(TOOLS_DIR, name + EXE),
+              os.path.join(APP_DIR, name + EXE),
+              os.path.join(RES_DIR, name + EXE),
               os.path.join(APP_DIR, "bin", name + EXE),
               os.path.join(os.environ.get("LOCALAPPDATA", ""), "Microsoft", "WinGet", "Links", name + EXE)):
         if os.path.isfile(c):
@@ -177,6 +202,9 @@ def save_config(cfg):
 
 
 def read_clipboard():
+    if IS_MAC:
+        r = subprocess.run(["pbpaste"], capture_output=True, env=dict(os.environ, LANG="en_US.UTF-8"))
+        return r.stdout.decode("utf-8", "replace")
     if not IS_WIN:
         return ""
     import ctypes
@@ -212,6 +240,7 @@ class Api:
 
     def __init__(self):
         self._window = None
+        prepare_tools()
         self._ytdlp = find_tool("yt-dlp")
         self._ffmpeg = find_tool("ffmpeg")
         self._stop_flag = threading.Event()
@@ -262,6 +291,8 @@ class Api:
             os.makedirs(path, exist_ok=True)
             if IS_WIN:
                 os.startfile(path)
+            elif IS_MAC:
+                subprocess.Popen(["open", path])
         except OSError:
             pass
         return True
@@ -310,7 +341,7 @@ class Api:
     # ---- pozadina
     def _self_update(self):
         """yt-dlp se sam ažurira pri svakom pokretanju (YouTube se često mijenja)."""
-        if not self._ytdlp or not os.path.dirname(self._ytdlp).startswith(APP_DIR):
+        if not self._ytdlp or not os.path.dirname(self._ytdlp).startswith((APP_DIR, TOOLS_DIR)):
             return
         r = run([self._ytdlp, "-U"])
         if "updated yt-dlp to" in (r.stdout + r.stderr).lower():
