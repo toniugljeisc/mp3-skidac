@@ -211,27 +211,27 @@ class Api:
     """Metode koje sučelje (JavaScript) poziva preko window.pywebview.api."""
 
     def __init__(self):
-        self.window = None
-        self.ytdlp = find_tool("yt-dlp")
-        self.ffmpeg = find_tool("ffmpeg")
-        self.stop_flag = threading.Event()
-        self.running = False
-        self.cache = {}           # url -> (pl_title, items)
-        self.lock = threading.Lock()
+        self._window = None
+        self._ytdlp = find_tool("yt-dlp")
+        self._ffmpeg = find_tool("ffmpeg")
+        self._stop_flag = threading.Event()
+        self._running = False
+        self._cache = {}           # url -> (pl_title, items)
+        self._lock = threading.Lock()
 
     # ---- slanje događaja u UI
     def _emit(self, kind, **data):
-        if not self.window:
+        if not self._window:
             return
         data["kind"] = kind
         try:
-            self.window.evaluate_js(f"window.onEvent({json.dumps(data, ensure_ascii=False)})")
+            self._window.evaluate_js(f"window.onEvent({json.dumps(data, ensure_ascii=False)})")
         except Exception:
             pass
 
     # ---- pozivi iz UI-ja
     def init(self):
-        missing = [n for n, p in (("yt-dlp", self.ytdlp), ("ffmpeg", self.ffmpeg)) if not p]
+        missing = [n for n, p in (("yt-dlp", self._ytdlp), ("ffmpeg", self._ffmpeg)) if not p]
         threading.Thread(target=self._self_update, daemon=True).start()
         return {"config": load_config(), "missing": missing, "version": APP_VERSION}
 
@@ -250,7 +250,7 @@ class Api:
     def pick_dir(self, current=""):
         import webview
         try:
-            res = self.window.create_file_dialog(webview.FOLDER_DIALOG, directory=current or "")
+            res = self._window.create_file_dialog(webview.FOLDER_DIALOG, directory=current or "")
         except Exception:
             return ""
         if not res:
@@ -267,17 +267,17 @@ class Api:
         return True
 
     def _list(self, url):
-        with self.lock:
-            if url in self.cache:
-                return self.cache[url]
-        res = ytdlp_list(self.ytdlp, url)
-        with self.lock:
-            self.cache[url] = res
+        with self._lock:
+            if url in self._cache:
+                return self._cache[url]
+        res = ytdlp_list(self._ytdlp, url)
+        with self._lock:
+            self._cache[url] = res
         return res
 
     def preview(self, text):
         """Pročitaj linkove (bez skidanja): naslovi + ID-jevi za sličice."""
-        if not self.ytdlp:
+        if not self._ytdlp:
             return {"items": [], "errors": ["Nedostaje yt-dlp"]}
         items, errors, playlists = [], [], []
         for u in split_urls(text):
@@ -293,26 +293,26 @@ class Api:
         return {"items": items, "playlists": playlists, "errors": errors}
 
     def start(self, cfg):
-        if self.running:
+        if self._running:
             return False
-        if not self.ytdlp or not self.ffmpeg:
+        if not self._ytdlp or not self._ffmpeg:
             return False
         self.save(cfg)
-        self.stop_flag.clear()
-        self.running = True
+        self._stop_flag.clear()
+        self._running = True
         threading.Thread(target=self._work, args=(cfg,), daemon=True).start()
         return True
 
     def stop(self):
-        self.stop_flag.set()
+        self._stop_flag.set()
         return True
 
     # ---- pozadina
     def _self_update(self):
         """yt-dlp se sam ažurira pri svakom pokretanju (YouTube se često mijenja)."""
-        if not self.ytdlp or not os.path.dirname(self.ytdlp).startswith(APP_DIR):
+        if not self._ytdlp or not os.path.dirname(self._ytdlp).startswith(APP_DIR):
             return
-        r = run([self.ytdlp, "-U"])
+        r = run([self._ytdlp, "-U"])
         if "updated yt-dlp to" in (r.stdout + r.stderr).lower():
             self._emit("info", text="yt-dlp je ažuriran na najnoviju verziju.")
 
@@ -361,7 +361,7 @@ class Api:
                 emit("status", text=f"Playlista: {pls.pop()} · {total} pjesama")
 
             for n, j in enumerate(jobs, 1):
-                if self.stop_flag.is_set():
+                if self._stop_flag.is_set():
                     emit("status", text=f"Zaustavljeno — skinuto: {ok}, preskočeno: {skipped}, greške: {fail}", color="accent")
                     return
                 i = n - 1
@@ -370,7 +370,7 @@ class Api:
                 emit("status", text=f"Skidam: {label(j, j['title'])}")
                 src = None
                 try:
-                    info = ytdlp_download(self.ytdlp, self.ffmpeg, j["url"], tmp)
+                    info = ytdlp_download(self._ytdlp, self._ffmpeg, j["url"], tmp)
                     src = info["filepath"]
                     title = info.get("track") or info.get("title") or info.get("id")
                     artist = re.sub(r"\s*-\s*Topic$", "", info.get("artist") or info.get("uploader") or "")
@@ -388,7 +388,7 @@ class Api:
                     meta = {"title": title, "artist": artist,
                             "album": info.get("album") or j["pl"] or "",
                             "track": str(j["idx"]) if j["idx"] else ""}
-                    before = normalize_to_mp3(self.ffmpeg, src, dst, meta, lufs, -1.0, 11, bitrate)
+                    before = normalize_to_mp3(self._ffmpeg, src, dst, meta, lufs, -1.0, 11, bitrate)
                     ok += 1
                     b = f"{before:.1f}".replace(".", ",").replace("-", "−")
                     t = f"{lufs:.0f}".replace("-", "−")
@@ -409,7 +409,7 @@ class Api:
             emit("status", text=f"Neočekivana greška: {e}", color="red")
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
-            self.running = False
+            self._running = False
             emit("done")
 
 
@@ -420,7 +420,7 @@ def main():
         f"{APP_NAME} {APP_VERSION}", url=os.path.join(RES_DIR, "ui", "index.html"),
         js_api=api, width=1140, height=800, min_size=(1000, 720),
         background_color="#0E1014", text_select=True)
-    api.window = win
+    api._window = win
     webview.start(http_server=True, private_mode=False,
                   storage_path=os.path.join(CONFIG_DIR, "webview"))
 
