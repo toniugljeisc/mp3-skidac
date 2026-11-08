@@ -17,7 +17,7 @@ import tempfile
 import threading
 
 APP_NAME = "MP3 Skidač"
-APP_VERSION = "1.2"
+APP_VERSION = "1.3"
 
 if getattr(sys, "frozen", False):
     APP_DIR = os.path.dirname(sys.executable)
@@ -28,6 +28,9 @@ else:
 
 IS_WIN = os.name == "nt"
 IS_MAC = sys.platform == "darwin"
+# Verzija s velikim slovima: exe se zove "MP3 Skidac Veliki.exe"
+VARIANT_BIG = "veliki" in os.path.basename(sys.executable).lower()
+BIG_KEY = "big_veliki" if VARIANT_BIG else "big_normal"
 NO_WINDOW = 0x08000000 if IS_WIN else 0
 EXE = ".exe" if IS_WIN else ""
 
@@ -262,7 +265,15 @@ class Api:
     def init(self):
         missing = [n for n, p in (("yt-dlp", self._ytdlp), ("ffmpeg", self._ffmpeg)) if not p]
         threading.Thread(target=self._self_update, daemon=True).start()
-        return {"config": load_config(), "missing": missing, "version": APP_VERSION}
+        cfg = load_config()
+        return {"config": cfg, "missing": missing, "version": APP_VERSION,
+                "big": bool(cfg.get(BIG_KEY, VARIANT_BIG))}
+
+    def set_big(self, on):
+        c = load_config()
+        c[BIG_KEY] = bool(on)
+        save_config(c)
+        return True
 
     def save(self, cfg):
         c = load_config()
@@ -448,8 +459,9 @@ def main():
     import webview
     api = Api()
     win = webview.create_window(
-        f"{APP_NAME} {APP_VERSION}", url=os.path.join(RES_DIR, "ui", "index.html"),
-        js_api=api, width=1140, height=800, min_size=(1000, 720),
+        f"{APP_NAME} {APP_VERSION}" + (" – velika slova" if VARIANT_BIG else ""),
+        url=os.path.join(RES_DIR, "ui", "index.html"),
+        js_api=api, width=1140, height=800, min_size=(1000, 720), maximized=VARIANT_BIG,
         background_color="#0E1014", text_select=True)
     api._window = win
     webview.start(http_server=True, private_mode=False,
